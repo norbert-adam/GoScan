@@ -1,58 +1,77 @@
 package main
 
 import (
-	"fmt"
-	"io"
-	"net/http"
-	"strings"
-	// "regexp"
-
-	// "net/netip"
 	"flag"
+	"fmt"
+	"net/http"
+	"os"
+
+	"golang.org/x/net/html"
+	"github.com/goscan/utils"
 )
 
-type ScanCtx struct {
-	Level	uint8
-}
-
-type Page struct {
-	BaseURL		string
-	Path		string
-	Scanned		bool
-}
 
 func main() {
 	fmt.Println("Hello world!")
-	
-	var fullTarget string
-	flag.StringVar(&fullTarget, "t", "", "Provide the IP of the target (e.g., 192.168.56.121)")
-	levelInt := flag.Int("l", 2, "The -l option defines how many levels deep you want to scan")
-	flag.Parse()
+		
+	scanCtx, err := utils.ParseArgs(flag.NewFlagSet("main", flag.ExitOnError))
+	if err != nil {
+		fmt.Printf("%v\n", err)
+		os.Exit(1)
+	}
+	if scanCtx == nil {
+		os.Exit(1)
+	}
 
-	tarStr := strings.TrimPrefix(fullTarget, "http://")
-	splits := strings.SplitN(tarStr, "/", 2)
-	fmt.Println(splits)
-	base := splits[0]
-	path := splits[1]
-	fmt.Println(tarStr)
-	fmt.Println("base: ", base)
-	fmt.Println("path: ", path)
+	fmt.Printf("BaseURL: %s\n", scanCtx.Target.BaseURL)
+	fmt.Printf("Path: %s\n", scanCtx.Target.Path)
+	fmt.Printf("Scanned? %t\n", scanCtx.Target.Scanned)
+	fmt.Printf("Scan level: %d\n", scanCtx.Level)
 
-	fmt.Println(*levelInt)
-	target := fmt.Sprintf("http://%s", tarStr)
+	target := fmt.Sprintf("http://%s", scanCtx.Target.BaseURL)
 
 	resp, err := http.Get(target)
 	if err != nil {
-		fmt.Println("Error")
-		fmt.Println(err)
-		return
+		fmt.Printf("Error with HTTP GET request: %v\n", err)
+		os.Exit(1)
 	}
 	defer resp.Body.Close()
 
-	bodyByte, err := io.ReadAll(resp.Body)
-	bodyStr := string(bodyByte[:])
-	lines := strings.Split(bodyStr, "\n")
-	for _, line := range lines {
-		fmt.Println(line)
+	htmlPage, err := html.Parse(resp.Body)
+	if err != nil {
+		fmt.Printf("Error parsing HTML: %v\n", err)
+		os.Exit(1)
 	}
+
+	fmt.Printf("%+v\n", htmlPage)
+	traverse(htmlPage)
+
+	links := findLinks(htmlPage, nil)
+	fmt.Printf("Found links: %+v\n", links)
+}
+
+func traverse(n *html.Node) {
+
+	fmt.Printf("Node Type: %+v - Node Data: %+v - Node Attributes: %+v\n", n.Type, n.Data, n.Attr)
+
+	for child := n.FirstChild; child != nil; child = child.NextSibling {
+		fmt.Printf("First child: %+v\n", child.Type)
+		traverse(child)
+	}
+}
+
+func findLinks(n *html.Node, links []string) []string {
+	if n.Type == html.ElementNode && n.Data == "a" {
+		for _, attr := range n.Attr {
+			if attr.Key == "href" {
+				links = append(links, attr.Val)
+			}
+		}
+	}
+
+	for child := n.FirstChild; child != nil; child = child.NextSibling {
+		links = findLinks(child, links)
+	}
+
+	return links
 }
